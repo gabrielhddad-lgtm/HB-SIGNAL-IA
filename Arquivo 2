@@ -1,0 +1,115 @@
+import streamlit as st
+import cv2
+import numpy as np
+from PIL import Image
+
+# -------------------------
+# CONFIGURAÇÃO DO SITE
+# -------------------------
+st.set_page_config(
+    page_title="HB Signals AI",
+    page_icon="📊",
+    layout="centered"
+)
+
+st.title("📊 HB Signals AI")
+st.caption("Análise estatística de gráficos • Timeframe 1M")
+
+# -------------------------
+# UPLOAD DA IMAGEM
+# -------------------------
+uploaded = st.file_uploader(
+    "📸 Envie o print do gráfico (celular)",
+    type=["png", "jpg", "jpeg"]
+)
+
+# -------------------------
+# FUNÇÕES DA IA
+# -------------------------
+def extrair_candles(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, thresh = cv2.threshold(
+        blur, 160, 255, cv2.THRESH_BINARY_INV
+    )
+
+    contours, _ = cv2.findContours(
+        thresh,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    candles = []
+    for c in contours:
+        x, y, w, h = cv2.boundingRect(c)
+
+        if 15 < h < 120 and 3 < w < 40:
+            roi = img[y:y+h, x:x+w]
+            direcao = "alta" if np.mean(roi) > 130 else "baixa"
+
+            candles.append({
+                "altura": h,
+                "direcao": direcao
+            })
+
+    return candles
+
+
+def analisar_grafico(img):
+    candles = extrair_candles(img)
+
+    if len(candles) < 6:
+        return "⚪ SEM ENTRADA", 0
+
+    ultimos = candles[-6:]
+    alturas = [c["altura"] for c in ultimos]
+
+    media = np.mean(alturas)
+    desvio = np.std(alturas)
+    inclinacao = alturas[-1] - alturas[0]
+
+    altas = sum(1 for c in ultimos if c["direcao"] == "alta")
+    baixas = 6 - altas
+
+    score = 0
+
+    if abs(inclinacao) > 15:
+        score += 20
+    if altas >= 4 or baixas >= 4:
+        score += 20
+    if media > 30:
+        score += 20
+    if max(alturas) < media * 1.8:
+        score += 20
+    if desvio > 5:
+        score += 20
+
+    if score < 65:
+        return "⚪ SEM ENTRADA", score
+
+    if altas > baixas:
+        return "🟢 COMPRA AUTORIZADA", score
+    else:
+        return "🔴 VENDA AUTORIZADA", score
+
+
+# -------------------------
+# INTERFACE
+# -------------------------
+if uploaded:
+    image = Image.open(uploaded)
+    st.image(image, use_container_width=True)
+
+    if st.button("🔍 ANALISAR"):
+        with st.spinner("Analisando o gráfico..."):
+            sinal, score = analisar_grafico(np.array(image))
+
+        st.subheader("📈 RESULTADO")
+        st.markdown(f"### {sinal}")
+        st.write(f"**Score de confiança:** {score}/100")
+
+        if score >= 65:
+            st.success("Contexto estatístico favorável")
+        else:
+            st.warning("Contexto fraco ou indefinido")
+
